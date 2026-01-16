@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+venv/
+
+#env
+.env
+
+# macOS
+.DS_Store
+
+# VSCode settings
+.vscode/
+
+# log
+*.log

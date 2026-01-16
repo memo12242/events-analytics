@@ -1,0 +1,68 @@
+from fastapi import FastAPI
+from deps import init_asyncpg_pool, close_asyncpg_pool, get_async_conn
+from contextlib import asynccontextmanager
+from config import settings
+from pydantic import BaseModel, Field
+from uuid import UUID
+from datetime import date
+from typing import List, Literal
+import asyncpg
+from asyncpg.exceptions import UniqueViolationError
+import json
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 起動時の処理
+    await init_asyncpg_pool()
+    yield
+    # 終了時の処理
+    await close_asyncpg_pool()
+
+if settings.env == "development":
+    app = FastAPI(lifespan=lifespan)
+else:
+    app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
+
+class Meta(BaseModel):
+    report_id: UUID
+    app: str = Field(min_length=1)
+    language: str = Field(min_length=2, max_length=8)
+    country: str = Field(min_length=2, max_length=2)
+    date_bucket: date
+    os: Literal["iOS", "iPadOS", "macOS"]
+    os_major: int = Field(ge=0)
+    os_minor: int = Field(ge=0)
+
+class Event(BaseModel):
+    name: str = Field(min_length=1)
+    count: int = Field(ge=0)
+
+class EventReport(BaseModel):
+    meta: Meta
+    events: List[Event]
+
+@app.post("/collect")
+async def collect(report: EventReport):
+    payload_json = json.dumps(report.model_dump(), ensure_ascii=False, default=str)
+    async with get_async_conn() as conn:
+        try:
+            await conn.execute(
+                """
+                INSERT INTO raw_reports (
+                    app,
+                    report_id,
+                    date_bucket,
+                    payload
+                )
+                VALUES ($1, $2, $3, $4::jsonb)
+                """,
+                report.meta.app,
+                report.meta.report_id,
+                report.meta.date_bucket,
+                payload_json,
+            )
+        except asyncpg.UniqueViolationError:
+            # app + report_id が重複（再送・リトライ等）
+            return {"status": "duplicate"}
+
+    return {"status": "ok"}
