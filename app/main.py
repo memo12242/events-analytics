@@ -41,28 +41,46 @@ class EventReport(BaseModel):
     meta: Meta
     events: List[Event]
 
-@app.post("/collect")
-async def collect(report: EventReport):
-    payload_json = json.dumps(report.model_dump(), ensure_ascii=False, default=str)
-    async with get_async_conn() as conn:
-        try:
-            await conn.execute(
-                """
-                INSERT INTO raw_reports (
-                    app,
-                    report_id,
-                    date_bucket,
-                    payload
-                )
-                VALUES ($1, $2, $3, $4::jsonb)
-                """,
-                report.meta.app,
-                report.meta.report_id,
-                report.meta.date_bucket,
-                payload_json,
-            )
-        except asyncpg.UniqueViolationError:
-            # app + report_id が重複（再送・リトライ等）
-            return {"status": "duplicate"}
+class EventReportsRequest(BaseModel):
+    reports: List[EventReport]
 
-    return {"status": "ok"}
+@app.post("/collect")
+async def collect(request: EventReportsRequest):
+    inserted = 0
+    duplicates = 0
+
+    async with get_async_conn() as conn:
+        for report in request.reports:
+            payload_json = json.dumps(
+                report.model_dump(),
+                ensure_ascii=False,
+                default=str,
+            )
+
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO raw_reports (
+                        app,
+                        report_id,
+                        date_bucket,
+                        payload
+                    )
+                    VALUES ($1, $2, $3, $4::jsonb)
+                    """,
+                    report.meta.app,
+                    report.meta.report_id,
+                    report.meta.date_bucket,
+                    payload_json,
+                )
+                inserted += 1
+
+            except UniqueViolationError:
+                # 冪等：再送・二重送信は無視
+                duplicates += 1
+
+    return {
+        "status": "ok",
+        "inserted": inserted,
+        "duplicates": duplicates,
+    }
