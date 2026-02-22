@@ -32,6 +32,9 @@ class Meta(BaseModel):
     os: Literal["iOS", "iPadOS", "macOS"]
     os_major: int = Field(ge=0)
     os_minor: int = Field(ge=0)
+    app_major: int = Field(ge=0)
+    app_minor: int = Field(ge=0)
+    app_patch: int = Field(ge=0)
 
 class Event(BaseModel):
     name: str = Field(min_length=1)
